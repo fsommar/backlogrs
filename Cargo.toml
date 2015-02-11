@@ -1,5 +1,13 @@
 [package]
-
 name = "backlogrs"
 version = "0.0.1"
 authors = ["Fredrik Sommar <fsommar@kth.se>"]
+
+[[bin]]
+name = "main"
+
+[dependencies.iron]
+version = "*"
+
+[dependencies]
+rustc-serialize = "*"
