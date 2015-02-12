@@ -1,5 +1,8 @@
 extern crate iron;
 extern crate "rustc-serialize" as rustc_serialize;
+extern crate postgres;
+
+use postgres::{Connection, SslMode};
 
 use rustc_serialize::{json, Encodable};
 use iron::prelude::*;
@@ -11,24 +14,25 @@ pub struct Json<T: Encodable>(T);
 #[derive(RustcEncodable, RustcDecodable)]
 struct Person {
     name: String,
-    age: i8
+    age: i32
 }
 
 fn main() {
     Iron::new(|_: &mut Request| {
+        // FIXME: Less unwraps
+        // TODO: Don't create a connection for every request?
+        // Forward slashes need to be escaped as %2F to be a valid URI
+        let conn = Connection::connect(
+            "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql",
+            &SslMode::None).unwrap();
 
-        // vim can't handle square brackets on
-        // multiple lines apparently, so curly braces
-        // are used instead.
-        let res = vec!{
+        let stmt = conn.prepare("SELECT * FROM Person").unwrap();
+        let res = stmt.query(&[]).unwrap().map(|x| {
             Person {
-                name: "fred".to_string(),
-                age: 22
-            },
-            Person {
-                name: "dan".to_string(),
-                age: 21
-            }};
+                name: x.get(0),
+                age: x.get(1)
+            }
+        }).collect::<Vec<Person>>();
 
         Ok(Response::with((status::Ok, Json(res))))
     }).listen("0.0.0.0:3000").unwrap();

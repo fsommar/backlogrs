@@ -6,8 +6,7 @@ authors = ["Fredrik Sommar <fsommar@kth.se>"]
 [[bin]]
 name = "main"
 
-[dependencies.iron]
-version = "*"
-
 [dependencies]
-rustc-serialize = "*"
+rustc-serialize = "0.2"
+postgres = "0.6"
+iron = "*"
