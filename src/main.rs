@@ -1,39 +1,26 @@
-#![feature(core)]
 extern crate iron;
 extern crate "error" as err;
 extern crate "rustc-serialize" as rustc_serialize;
 extern crate postgres;
+extern crate plugin;
+extern crate typemap;
 
-use std::error::{self, Error};
-use std::fmt;
 use postgres::{Connection, SslMode};
 use rustc_serialize::{json, Encodable};
 use iron::prelude::*;
+use iron::{Handler, AroundMiddleware};
 use iron::status;
 use iron::headers;
+use plugin::Extensible;
 
 pub struct Json<T: Encodable>(T);
-pub enum PostgresError {
-    Postgres(postgres::ConnectError)
-}
 
-impl Error for PostgresError {
-    fn description(&self) -> &str {
-        match *self {
-            PostgresError::Postgres(ref err) => err.description()
-        }
-    }
-}
-
-impl fmt::Display for PostgresError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        self.description().fmt(f)
-    }
-}
-
-impl error::FromError<postgres::ConnectError> for Box<PostgresError> {
-    fn from_error(err: postgres::ConnectError) -> Box<PostgresError> {
-        Box::new(PostgresError::Postgres(err))
+impl<T: Encodable> iron::modifier::Modifier<Response> for Json<T> {
+    #[inline]
+    fn modify(self, res: &mut Response) {
+        let Json(x) = self;
+        res.headers.set(headers::ContentType("application/json".parse().unwrap()));
+        res.set_mut(json::encode(&x).unwrap());
     }
 }
 
@@ -47,6 +34,44 @@ impl<T, E: err::Error> OnError<T> for Result<T, E> {
     }
 }
 
+struct DbConnection;
+impl typemap::Key for DbConnection { type Value = postgres::Connection; }
+
+struct DbConnectionHandler<H: Handler> {
+    handler: H
+}
+
+// TODO: Don't create a connection for every request
+// r2d2 and r2d2_postgres could be used for creating a db pool
+impl<H: Handler> Handler for DbConnectionHandler<H> {
+    fn handle(&self, req: &mut Request) -> IronResult<Response> {
+        let conn = try!(Connection::connect(
+                "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql",
+                &SslMode::None).on_err(status::InternalServerError));
+        req.extensions_mut().insert::<DbConnection>(conn);
+        let res = self.handler.handle(req);
+        res
+    }
+}
+
+impl AroundMiddleware for DbConnection {
+    fn around(self, handler: Box<Handler>) -> Box<Handler> {
+        Box::new(DbConnectionHandler {
+            handler: handler
+        }) as Box<Handler>
+    }
+}
+
+trait GetDb {
+    fn db(&self) -> &postgres::Connection;
+}
+
+impl<'a> GetDb for Request<'a> {
+    fn db(&self) -> &postgres::Connection {
+        self.extensions().find::<DbConnection>().unwrap()
+    }
+}
+
 #[derive(RustcEncodable, RustcDecodable)]
 struct Person {
     name: String,
@@ -54,19 +79,13 @@ struct Person {
 }
 
 fn main() {
-    Iron::new(|_: &mut Request| {
-        // FIXME: Less unwraps
-        // TODO: Don't create a connection for every request?
-        // Forward slashes need to be escaped as %2F to be a valid URI
-        // FIXME: Remove useless test
-        let err: Result<u32, postgres::ConnectError> = Err(postgres::ConnectError::MissingPassword);
-        try!(err.on_err("Error!"));
-        let conn = try!(Connection::connect(
-            "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql",
-            &SslMode::None).on_err(status::InternalServerError));
+    Iron::new(DbConnection.around(Box::new(|req: &mut Request| {
+        let conn = req.db();
+        let err_response = status::InternalServerError;
 
-        let stmt = conn.prepare("SELECT * FROM Person").unwrap();
-        let res = stmt.query(&[]).unwrap().map(|x| {
+        // Forward slashes need to be escaped as %2F to be a valid URI
+        let stmt = try!(conn.prepare("SELECT * FROM Person").on_err(err_response));
+        let res = try!(stmt.query(&[]).on_err(err_response)).map(|x| {
             Person {
                 name: x.get(0),
                 age: x.get(1)
@@ -74,14 +93,5 @@ fn main() {
         }).collect::<Vec<Person>>();
 
         Ok(Response::with((status::Ok, Json(res))))
-    }).listen("0.0.0.0:3000").unwrap();
-}
-
-impl<T: Encodable> iron::modifier::Modifier<Response> for Json<T> {
-    #[inline]
-    fn modify(self, res: &mut Response) {
-        let Json(x) = self;
-        res.headers.set(headers::ContentType("application/json".parse().unwrap()));
-        res.set_mut(json::encode(&x).unwrap());
-    }
+    }))).listen("0.0.0.0:3000").unwrap();
 }
