@@ -1,4 +1,5 @@
 extern crate iron;
+extern crate router;
 extern crate "error" as err;
 extern crate "rustc-serialize" as rustc_serialize;
 extern crate postgres;
@@ -7,6 +8,7 @@ extern crate typemap;
 
 use postgres::{Connection, SslMode};
 use rustc_serialize::{json, Encodable};
+use router::Router;
 use iron::prelude::*;
 use iron::{Handler, AroundMiddleware};
 use iron::status;
@@ -79,19 +81,23 @@ struct Person {
 }
 
 fn main() {
-    Iron::new(DbConnection.around(Box::new(|req: &mut Request| {
-        let conn = req.db();
-        let err_response = status::InternalServerError;
+    let mut router = Router::new();
+    router.get("/persons", get_persons);
+    Iron::new(DbConnection.around(Box::new(router))).listen("0.0.0.0:3000").unwrap();
+}
 
-        // Forward slashes need to be escaped as %2F to be a valid URI
-        let stmt = try!(conn.prepare("SELECT * FROM Person").on_err(err_response));
-        let res = try!(stmt.query(&[]).on_err(err_response)).map(|x| {
-            Person {
-                name: x.get(0),
-                age: x.get(1)
-            }
-        }).collect::<Vec<Person>>();
+fn get_persons(req: &mut Request) -> IronResult<Response> {
+    let conn = req.db();
+    let err_response = status::InternalServerError;
 
-        Ok(Response::with((status::Ok, Json(res))))
-    }))).listen("0.0.0.0:3000").unwrap();
+    // Forward slashes need to be escaped as %2F to be a valid URI
+    let stmt = try!(conn.prepare("SELECT * FROM Person").on_err(err_response));
+    let res = try!(stmt.query(&[]).on_err(err_response)).map(|x| {
+        Person {
+            name: x.get(0),
+            age: x.get(1)
+        }
+    }).collect::<Vec<Person>>();
+
+    Ok(Response::with((status::Ok, Json(res))))
 }
