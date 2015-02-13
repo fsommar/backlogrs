@@ -3,10 +3,12 @@ extern crate router;
 extern crate "error" as err;
 extern crate "rustc-serialize" as rustc_serialize;
 extern crate postgres;
+extern crate r2d2;
+extern crate r2d2_postgres;
 extern crate plugin;
 extern crate typemap;
 
-use postgres::{Connection, SslMode};
+use postgres::SslMode;
 use rustc_serialize::{json, Encodable};
 use router::Router;
 use iron::prelude::*;
@@ -14,6 +16,10 @@ use iron::{Handler, AroundMiddleware};
 use iron::status;
 use iron::headers;
 use plugin::Extensible;
+
+use std::sync::Arc;
+use std::default::Default;
+use r2d2_postgres::PostgresConnectionManager;
 
 pub struct Json<T: Encodable>(T);
 
@@ -36,41 +42,59 @@ impl<T, E: err::Error> OnError<T> for Result<T, E> {
     }
 }
 
-struct DbConnection;
-impl typemap::Key for DbConnection { type Value = postgres::Connection; }
+struct DbConnection {
+    pool: Arc<r2d2::Pool<PostgresConnectionManager>>
+}
+
+impl DbConnection {
+    fn new() -> DbConnection {
+        let config = Default::default();
+        let manager = PostgresConnectionManager::new(
+            "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql",
+            SslMode::None);
+        let error_handler = Box::new(r2d2::LoggingErrorHandler);
+        let pool = Arc::new(r2d2::Pool::new(config, manager, error_handler).unwrap());
+        DbConnection {
+            pool: pool
+        }
+    }
+}
+
+impl typemap::Key for DbConnection {
+    type Value = Arc<r2d2::Pool<PostgresConnectionManager>>;
+}
 
 struct DbConnectionHandler<H: Handler> {
+    conn: DbConnection,
     handler: H
 }
 
-// TODO: Don't create a connection for every request
-// r2d2 and r2d2_postgres could be used for creating a db pool
 impl<H: Handler> Handler for DbConnectionHandler<H> {
     fn handle(&self, req: &mut Request) -> IronResult<Response> {
-        let conn = try!(Connection::connect(
-                "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql",
-                &SslMode::None).on_err(status::InternalServerError));
-        req.extensions_mut().insert::<DbConnection>(conn);
-        let res = self.handler.handle(req);
-        res
+        req.extensions_mut().insert::<DbConnection>(self.conn.pool.clone());
+        self.handler.handle(req)
     }
 }
 
 impl AroundMiddleware for DbConnection {
     fn around(self, handler: Box<Handler>) -> Box<Handler> {
         Box::new(DbConnectionHandler {
+            conn: self,
             handler: handler
         }) as Box<Handler>
     }
 }
 
-trait GetDb {
-    fn db(&self) -> &postgres::Connection;
+trait GetDb<'a> {
+    fn db(&'a self) -> r2d2::PooledConnection<'a, PostgresConnectionManager>;
 }
 
-impl<'a> GetDb for Request<'a> {
-    fn db(&self) -> &postgres::Connection {
-        self.extensions().find::<DbConnection>().unwrap()
+/// Live for at least as long as the borrow on Request does.
+/// Whether it lives as long as the Request itself is not interesting.
+impl<'a, 'b: 'a> GetDb<'a> for Request<'b> {
+    #[inline(always)]
+    fn db(&'a self) -> r2d2::PooledConnection<'a, PostgresConnectionManager> {
+        self.extensions().get::<DbConnection>().unwrap().get().unwrap()
     }
 }
 
@@ -83,7 +107,7 @@ struct Person {
 fn main() {
     let mut router = Router::new();
     router.get("/persons", get_persons);
-    Iron::new(DbConnection.around(Box::new(router))).listen("0.0.0.0:3000").unwrap();
+    Iron::new(DbConnection::new().around(Box::new(router))).listen("0.0.0.0:3000").unwrap();
 }
 
 fn get_persons(req: &mut Request) -> IronResult<Response> {
