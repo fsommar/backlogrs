@@ -24,12 +24,7 @@ fn get_persons(req: &mut Request) -> IronResult<Response> {
     let e = status::InternalServerError;
 
     let stmt = try!(db.prepare("SELECT * FROM Person").on_err(e));
-    let res = try!(stmt.query(&[]).on_err(e)).map(|x| {
-        Person {
-            name: x.get(0),
-            age: x.get(1)
-        }
-    }).collect::<Vec<Person>>();
+    let res = try!(stmt.query(&[]).on_err(e)).collect_sql::<Vec<Person>>();
 
     Ok(Response::with((status::Ok, Json(res))))
 }

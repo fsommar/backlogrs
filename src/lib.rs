@@ -8,6 +8,7 @@ extern crate r2d2_postgres;
 extern crate plugin;
 extern crate typemap;
 
+use ::std::iter::FromIterator;
 use std::sync::Arc;
 use std::default::Default;
 use std::error::Error;
@@ -26,8 +27,40 @@ use iron::{
 // the user doesn't separately need to import it by themselves.
 pub use iron::AroundMiddleware;
 pub use iron::BeforeMiddleware;
+pub use postgres::Row;
 
 pub mod models;
+
+/// Adds an extension method that works like the normal `collect` on
+/// iterators but for postgres query results instead. `FromSqlRow` needs
+/// to be implemented on the item but that is it.
+///
+/// Example:
+/// ```rust
+/// let stmt = db.prepare("SELECT * FROM Person");
+/// let res = try!(stmt.query(&[])).collect_sql::<Vec<Person>>();
+/// ```
+pub trait CollectSql<T> {
+    fn collect_sql<R>(self) -> R
+        where R: FromIterator<T>;
+}
+
+impl<'stmt,T: FromSqlRow> CollectSql<T> for postgres::Rows<'stmt> {
+    fn collect_sql<R: FromIterator<T>>(self) -> R {
+        self.map(|x| FromSqlRow::from_sql_row(&x)).collect()
+    }
+}
+
+/// Implement this trait for database models in order for them to be
+/// collectable from a postgres query.
+///
+/// This is a helper trait for `CollectSql` which adds the extension
+/// method `collect_sql` to the `Rows` gained from database queries
+/// in postgres.
+pub trait FromSqlRow {
+    fn from_sql_row<'stmt>(row: &postgres::Row<'stmt>) -> Self;
+}
+
 
 #[derive(Debug)]
 pub struct ApiError;
