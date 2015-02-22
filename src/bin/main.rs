@@ -11,15 +11,20 @@ use router::Router;
 fn main() {
     let mut router = Router::new();
     router.get("/persons", get_persons);
-    Iron::new(DbConnection::new().around(Box::new(router))).listen("0.0.0.0:3000").unwrap();
+
+    let mut chain = Chain::new(router);
+    chain.link_before(Api);
+    chain.around(DbConnection::new());
+
+    Iron::new(chain).listen("0.0.0.0:3000").unwrap();
 }
 
 fn get_persons(req: &mut Request) -> IronResult<Response> {
-    let conn = req.db();
-    let err_response = status::InternalServerError;
+    let db = req.db();
+    let e = status::InternalServerError;
 
-    let stmt = try!(conn.prepare("SELECT * FROM Person").on_err(err_response));
-    let res = try!(stmt.query(&[]).on_err(err_response)).map(|x| {
+    let stmt = try!(db.prepare("SELECT * FROM Person").on_err(e));
+    let res = try!(stmt.query(&[]).on_err(e)).map(|x| {
         Person {
             name: x.get(0),
             age: x.get(1)

@@ -1,3 +1,4 @@
+#![feature(core)]
 extern crate iron;
 extern crate "error" as err;
 extern crate "rustc-serialize" as rustc_serialize;
@@ -9,6 +10,8 @@ extern crate typemap;
 
 use std::sync::Arc;
 use std::default::Default;
+use std::error::Error;
+use std::fmt::{self, Debug};
 use rustc_serialize::{json, Encodable};
 use r2d2_postgres::PostgresConnectionManager;
 use postgres::SslMode;
@@ -22,8 +25,38 @@ use iron::{
 // Reexport AroundMiddleware for DbConnection so that
 // the user doesn't separately need to import it by themselves.
 pub use iron::AroundMiddleware;
+pub use iron::BeforeMiddleware;
 
 pub mod models;
+
+#[derive(Debug)]
+pub struct ApiError;
+
+impl fmt::Display for ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            Debug::fmt(self, f)
+        }
+}
+
+impl Error for ApiError {
+    fn description(&self) -> &'static str {
+        "ApiError"
+    }
+}
+
+pub struct Api;
+
+impl BeforeMiddleware for Api {
+    fn before(&self, req: &mut Request) -> IronResult<()> {
+        if req.url.path[0] != "api" {
+            Err(IronError::new(ApiError, iron::status::NotFound))
+        } else {
+            // Remove api prefix and continue
+            req.url.path[0].clear();
+            Ok(())
+        }
+    }
+}
 
 /// A simple wrapper struct for marking a struct as a JSON response.
 pub struct Json<T: Encodable>(pub T);
@@ -50,7 +83,7 @@ pub trait OnError<T> {
 
 impl<T, E: err::Error> OnError<T> for Result<T, E> {
     fn on_err<M: iron::modifier::Modifier<Response>>(self, m: M) -> IronResult<T> {
-        self.map_err(|x| iron::IronError::new(x, m))
+        self.map_err(|err| iron::IronError::new(err, m))
     }
 }
 
@@ -66,7 +99,7 @@ impl DbConnection {
     pub fn new() -> DbConnection {
         let config = Default::default();
         let manager = PostgresConnectionManager::new(
-            // Forward slashes need to be escaped as %2F to be a valid URI
+            // Forward slashes need to be escaped as %2F to be a valid URI.
             // /var/run/postgresql is the default unix socket that when
             // connecting on the same host is automatically accepted
             // even without a password.
