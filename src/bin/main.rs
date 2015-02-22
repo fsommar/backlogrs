@@ -5,7 +5,7 @@ extern crate backlogrs;
 use backlogrs::*;
 use backlogrs::models::*;
 use iron::prelude::*;
-use iron::{status, AroundMiddleware};
+use iron::{status};
 use router::Router;
 
 fn main() {
