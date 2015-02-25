@@ -3,11 +3,18 @@ extern crate postgres;
 use {Row, FromSqlRow};
 use postgres::types::Type;
 
+#[derive(RustcEncodable, RustcDecodable, Debug, Clone)]
+pub struct Login {
+    pub id: i32,
+    pub username: String,
+    pub password: String,
+    pub email: String,
+}
+
 #[derive(RustcEncodable, RustcDecodable, Debug)]
 pub struct User {
     pub id: i32,
     pub username: String,
-    pub password: String,
     pub email: String,
 }
 
@@ -81,6 +88,16 @@ impl postgres::FromSql for Status {
 impl FromSqlRow for User {
     fn from_sql_row<'stmt>(row: &Row<'stmt>) -> User {
         User {
+            id: row.get(0),
+            username: row.get(1),
+            email: row.get(3),
+        }
+    }
+}
+
+impl FromSqlRow for Login {
+    fn from_sql_row<'stmt>(row: &Row<'stmt>) -> Login {
+        Login {
             id: row.get(0),
             username: row.get(1),
             password: row.get(2),
