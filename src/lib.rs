@@ -136,7 +136,7 @@ impl DbConnection {
             // /var/run/postgresql is the default unix socket that when
             // connecting on the same host is automatically accepted
             // even without a password.
-            "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql",
+            "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql/backlogrs",
             SslMode::None);
         let error_handler = Box::new(r2d2::LoggingErrorHandler);
         let pool = Arc::new(r2d2::Pool::new(config, manager, error_handler).unwrap());
