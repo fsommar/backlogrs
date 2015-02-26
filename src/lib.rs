@@ -63,15 +63,15 @@ pub trait FromSqlRow {
 
 
 #[derive(Debug)]
-pub struct ApiError;
+pub struct LibError;
 
-impl fmt::Display for ApiError {
+impl fmt::Display for LibError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             Debug::fmt(self, f)
         }
 }
 
-impl Error for ApiError {
+impl Error for LibError {
     fn description(&self) -> &'static str {
         "ApiError"
     }
@@ -82,7 +82,7 @@ pub struct Api;
 impl BeforeMiddleware for Api {
     fn before(&self, req: &mut Request) -> IronResult<()> {
         if req.url.path[0] != "api" {
-            Err(IronError::new(ApiError, iron::status::NotFound))
+            Err(IronError::new(LibError, iron::status::NotFound))
         } else {
             // Remove api prefix and continue
             req.url.path[0].clear();
