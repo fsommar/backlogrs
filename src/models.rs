@@ -1,8 +1,12 @@
-extern crate "rustc-serialize" as rustc_serialize;
+extern crate "rustc-serialize" as serialize;
 extern crate postgres;
 extern crate time;
+extern crate chrono;
 use {Row, FromSqlRow};
 use postgres::types::Type;
+
+#[derive(Debug, Clone)]
+pub struct UtcString(chrono::DateTime<chrono::UTC>);
 
 #[derive(RustcEncodable, RustcDecodable, Debug, Clone)]
 pub struct Login {
@@ -33,7 +37,7 @@ pub struct Entry {
     pub id: Option<i32>,
     pub game_id: Option<i32>,
     pub time_played: Option<f32>,
-    pub last_update: Option<time::Timespec>,
+    pub last_update: Option<String>,
     pub status: Option<Status>,
     pub game: Option<Game>,
 }
@@ -53,15 +57,60 @@ pub struct Game {
     pub description: String,
 }
 
+impl serialize::Encodable for UtcString {
+    fn encode<S: serialize::Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        s.emit_str(&self.to_string())
+    }
+}
+
+impl serialize::Decodable for UtcString {
+    fn decode<D: serialize::Decoder>(d: &mut D) -> Result<Self, D::Error> {
+        let s = try!(d.read_str());
+        Ok(::std::str::FromStr::from_str(&s).unwrap())
+    }
+}
+
+impl ::std::string::ToString for UtcString {
+    fn to_string(&self) -> String {
+        self.0.to_rfc3339()
+    }
+}
+
+impl ::std::str::FromStr for UtcString {
+    type Err = chrono::format::ParseError;
+
+    fn from_str(s: &str) -> Result<UtcString, chrono::format::ParseError> {
+        Ok(UtcString(try!(::std::str::FromStr::from_str(s))))
+    }
+}
+
+impl postgres::FromSql for UtcString {
+    fn from_sql(ty: &Type, raw: Option<&[u8]>) -> postgres::Result<Self> {
+        match *ty {
+            Type::Timestamp | Type::TimestampTZ => {}
+            _ => return Err(postgres::Error::WrongType(ty.clone()))
+        }
+        let ts: time::Timespec = try!(postgres::FromSql::from_sql(ty, raw));
+        let dt = chrono::NaiveDateTime::from_timestamp(ts.sec, ts.nsec as u32);
+        Ok(UtcString(chrono::DateTime::from_utc(dt, chrono::UTC)))
+    }
+}
+
+impl postgres::ToSql for UtcString {
+    fn to_sql(&self, ty: &Type) -> postgres::Result<Option<Vec<u8>>> {
+        match *ty {
+            Type::Timestamp | Type::TimestampTZ => {}
+            _ => return Err(postgres::Error::WrongType(ty.clone()))
+        }
+        self.0.timestamp().to_sql(&Type::Int8)
+    }
+}
+
 impl postgres::FromSql for Status {
     fn from_sql(ty: &Type, raw: Option<&[u8]>) -> postgres::Result<Self> {
-        let valid_type = match *ty {
-            // Assume name always is lower case
-            Type::Unknown(ref unk) => unk.name() == "status",
-            _ => false,
-        };
-        if !valid_type {
-            return Err(postgres::Error::WrongType(ty.clone()));
+        match *ty {
+            Type::Unknown(ref u) if u.name() == "status" => {}
+            _ => return Err(postgres::Error::WrongType(ty.clone()))
         }
 
         let err = Err(postgres::Error::BadData);
@@ -131,11 +180,12 @@ impl FromSqlRow for Library {
 
 impl FromSqlRow for Entry {
     fn from_sql_row<'stmt>(row: &Row<'stmt>) -> Entry {
+        let us: UtcString = row.get(3);
         Entry {
             id: Some(row.get(0)),
             game_id: Some(row.get(1)),
             time_played: row.get(2),
-            last_update: Some(row.get(3)),
+            last_update: Some(us.to_string()),
             status: Some(row.get(4)),
             game: None,
         }

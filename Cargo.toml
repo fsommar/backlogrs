@@ -13,6 +13,7 @@ plugin = "0.2.1"
 typemap = "0.0.9"
 r2d2 = "0.5.1"
 r2d2_postgres = "0.7.0"
+chrono = "0.2.1"
 
 [dependencies.bodyparser]
 git = "https://github.com/iron/body-parser"
@@ -21,4 +22,3 @@ rev = "480cbf7d628d97e9f43f1858e66492b242d67e25"
 [dependencies.time]
 version = "0.1.18"
 features = ["rustc-serialize"]
-
