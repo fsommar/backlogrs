@@ -4,6 +4,8 @@ extern crate time;
 extern crate chrono;
 use {Row, FromSqlRow};
 use postgres::types::Type;
+use std::string;
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct UtcString(chrono::DateTime<chrono::UTC>);
@@ -66,21 +68,21 @@ impl serialize::Encodable for UtcString {
 impl serialize::Decodable for UtcString {
     fn decode<D: serialize::Decoder>(d: &mut D) -> Result<Self, D::Error> {
         let s = try!(d.read_str());
-        Ok(::std::str::FromStr::from_str(&s).unwrap())
+        Ok(FromStr::from_str(&s).unwrap())
     }
 }
 
-impl ::std::string::ToString for UtcString {
+impl string::ToString for UtcString {
     fn to_string(&self) -> String {
-        self.0.to_rfc3339()
+        format!("{:?}", self.0)
     }
 }
 
-impl ::std::str::FromStr for UtcString {
+impl FromStr for UtcString {
     type Err = chrono::format::ParseError;
 
     fn from_str(s: &str) -> Result<UtcString, chrono::format::ParseError> {
-        Ok(UtcString(try!(::std::str::FromStr::from_str(s))))
+        Ok(UtcString(try!(FromStr::from_str(s))))
     }
 }
 
@@ -115,11 +117,11 @@ impl postgres::FromSql for Status {
 
         let err = Err(postgres::Error::BadData);
         if let Some(x) = raw {
-            let res = match ::std::str::from_utf8(x).unwrap() {
-                "Frozen" => Status::Frozen,
-                "CurrentlyPlaying" => Status::CurrentlyPlaying,
-                "Dropped" => Status::Dropped,
-                "PlanToPlay" => Status::PlanToPlay,
+            let res = match ::std::str::from_utf8(x) {
+                Ok("Frozen") => Status::Frozen,
+                Ok("CurrentlyPlaying") => Status::CurrentlyPlaying,
+                Ok("Dropped") => Status::Dropped,
+                Ok("PlanToPlay") => Status::PlanToPlay,
                 _ => return err,
             };
             Ok(res)

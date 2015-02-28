@@ -18,14 +18,10 @@ use r2d2_postgres::PostgresConnectionManager;
 use postgres::SslMode;
 use plugin::Extensible;
 use iron::prelude::*;
-use iron::{
-    headers,
-    Handler,
-};
+use iron::{headers};
 
-// Reexport AroundMiddleware for DbConnection so that
+// Reexport BeforeMiddleware for DbConnection so that
 // the user doesn't separately need to import it by themselves.
-pub use iron::AroundMiddleware;
 pub use iron::BeforeMiddleware;
 pub use postgres::Row;
 
@@ -150,31 +146,16 @@ impl typemap::Key for DbConnection {
     type Value = Arc<r2d2::Pool<PostgresConnectionManager>>;
 }
 
-/// Stores the `DbConnection` that's then used by the `AroundMiddleware`.
-struct DbConnectionHandler<H: Handler> {
-    conn: DbConnection,
-    handler: H
-}
-
-/// This `Handler` inserts an `Arc` clone of a `DbConnection` pool before every request.
-impl<H: Handler> Handler for DbConnectionHandler<H> {
-    fn handle(&self, req: &mut Request) -> IronResult<Response> {
-        req.extensions_mut().insert::<DbConnection>(self.conn.pool.clone());
-        self.handler.handle(req)
-    }
-}
-
-impl AroundMiddleware for DbConnection {
-    fn around(self, handler: Box<Handler>) -> Box<Handler> {
-        Box::new(DbConnectionHandler {
-            conn: self,
-            handler: handler
-        }) as Box<Handler>
+impl BeforeMiddleware for DbConnection {
+    fn before(&self, req: &mut Request) -> IronResult<()> {
+        println!("Before inserting pool, {:?}", req);
+        req.extensions_mut().insert::<DbConnection>(self.pool.clone());
+        Ok(())
     }
 }
 
 /// Provides an extension method for `Request`s to simplify the process of
-/// getting the database connection from the `AroundMiddleware` handler.
+/// getting the database connection from the `BeforeMiddleware` handler.
 pub trait GetDb<'a> {
     fn db(&'a self) -> r2d2::PooledConnection<'a, PostgresConnectionManager>;
 }
@@ -185,6 +166,6 @@ impl<'a, 'b: 'a> GetDb<'a> for Request<'b> {
     #[inline]
     fn db(&'a self) -> r2d2::PooledConnection<'a, PostgresConnectionManager> {
         // FIXME: Maybe some form of error handling; e.g. returning an IronResult?
-        self.extensions().get::<DbConnection>().unwrap().get().unwrap()
+        self.extensions().get::<DbConnection>().and_then(|x| x.get().ok()).unwrap()
     }
 }

@@ -38,7 +38,7 @@ fn main() {
 
     let mut chain = Chain::new(router);
     chain.link_before(Api);
-    chain.around(DbConnection::new());
+    chain.link_before(DbConnection::new());
     // Prints the error in html body
     chain.link_after(DebugIronError);
 
@@ -151,7 +151,7 @@ fn get_game_by_id(req: &mut Request) -> IronResult<Response> {
 
     let db = req.db();
     let stmt = try!(db.prepare("SELECT * FROM Game WHERE id = $1").on_err(e));
-    let mut res = try!(stmt.query(&[&id]).on_err(("Oops", e))).collect_sql::<Vec<Game>>();
+    let mut res = try!(stmt.query(&[&id]).on_err(e)).collect_sql::<Vec<Game>>();
 
     if res.is_empty() {
         Ok(Response::with(e))
@@ -200,7 +200,7 @@ fn get_entry(req: &mut Request) -> IronResult<Response> {
 fn get_library(req: &mut Request) -> IronResult<Response> {
     let e = status::InternalServerError;
     let user_id: i32 = try!(req.extensions.find::<Router>()
-                            .and_then(|x| x.find("uid"))
+                            .and_then(|x| x.find("id"))
                             .ok_or(LibError)
                             .and_then(|x| FromStr::from_str(x).map_err(|_| LibError))
                             .on_err(e));
