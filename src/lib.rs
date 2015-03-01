@@ -1,5 +1,6 @@
 #![feature(core)]
 extern crate iron;
+extern crate router;
 extern crate "error" as err;
 extern crate "rustc-serialize" as rustc_serialize;
 extern crate postgres;
@@ -19,6 +20,8 @@ use postgres::SslMode;
 use plugin::Extensible;
 use iron::prelude::*;
 use iron::{headers};
+use router::Router;
+use std::str::FromStr;
 
 // Reexport BeforeMiddleware for DbConnection so that
 // the user doesn't separately need to import it by themselves.
@@ -26,6 +29,15 @@ pub use iron::BeforeMiddleware;
 pub use postgres::Row;
 
 pub mod models;
+
+pub struct DebugIronError;
+impl iron::AfterMiddleware for DebugIronError {
+    fn catch(&self, _: &mut Request, err: IronError) -> IronResult<Response> {
+        // In case of error bubbling up
+        // Ok(err.response)
+        Ok(Response::with(format!("{:?}", err)))
+    }
+}
 
 /// Adds an extension method that works like the normal `collect` on
 /// iterators but for postgres query results instead. `FromSqlRow` needs
@@ -59,17 +71,24 @@ pub trait FromSqlRow {
 
 
 #[derive(Debug)]
-pub struct LibError;
+pub enum LibError {
+    Cause(String),
+    Other(Box<err::Error>),
+}
 
 impl fmt::Display for LibError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            Debug::fmt(self, f)
-        }
+        Debug::fmt(self, f)
+    }
 }
 
 impl Error for LibError {
-    fn description(&self) -> &'static str {
-        "ApiError"
+    fn description(&self) -> &str {
+        use LibError::*;
+        match *self {
+            Cause(ref s) => &s,
+            Other(ref err) => err.description(),
+        }
     }
 }
 
@@ -78,7 +97,7 @@ pub struct Api;
 impl BeforeMiddleware for Api {
     fn before(&self, req: &mut Request) -> IronResult<()> {
         if req.url.path[0] != "api" {
-            Err(IronError::new(LibError, iron::status::NotFound))
+            Err(IronError::new(LibError::Cause("Lacking api prefix".to_string()), iron::status::NotFound))
         } else {
             // Remove api prefix and continue
             req.url.path[0].clear();
@@ -148,7 +167,7 @@ impl typemap::Key for DbConnection {
 
 impl BeforeMiddleware for DbConnection {
     fn before(&self, req: &mut Request) -> IronResult<()> {
-        println!("Before inserting pool, {:?}", req);
+        println!("{:?}", req);
         req.extensions_mut().insert::<DbConnection>(self.pool.clone());
         Ok(())
     }
@@ -167,5 +186,20 @@ impl<'a, 'b: 'a> GetDb<'a> for Request<'b> {
     fn db(&'a self) -> r2d2::PooledConnection<'a, PostgresConnectionManager> {
         // FIXME: Maybe some form of error handling; e.g. returning an IronResult?
         self.extensions().get::<DbConnection>().and_then(|x| x.get().ok()).unwrap()
+    }
+}
+
+pub trait GetFromRouter<U> {
+    fn get_from_router<T: FromStr<Err = U>>(&self, path: &str) -> Result<T, LibError>;
+}
+
+impl<'a, U: err::Error> GetFromRouter<U> for Request<'a> {
+    fn get_from_router<T: FromStr<Err = U>>(&self, path: &str) -> Result<T, LibError> {
+        self.extensions.find::<Router>()
+            .and_then(|x| x.find(path))
+            .ok_or(LibError::Cause("Unable to find path".to_string()))
+            .and_then(|x| FromStr::from_str(x).map_err(|err| {
+                LibError::Other(Box::new(err))
+            }))
     }
 }
