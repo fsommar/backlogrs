@@ -1,15 +1,13 @@
-#![feature(core)]
 extern crate iron;
 extern crate router;
 extern crate bodyparser;
-extern crate backlogrs;
+#[macro_use] extern crate backlogrs;
 extern crate time;
 extern crate "rustc-serialize" as rustc_serialize;
 
 use backlogrs::*;
 use backlogrs::models::*;
 use iron::prelude::*;
-use iron::{status};
 use router::Router;
 
 fn main() {
@@ -42,15 +40,13 @@ fn post_entry(req: &mut Request) -> IronResult<Response> {
                              .on_err(e)).unwrap();
     let user_id = try!(req.get_from_router::<i32>("id").on_err(e));
 
-    let e = status::InternalServerError;
     let db = req.db();
     if let Some(entry_id) = new_entry.id {
         // The entry should be updated
-        let stmt = try!(db.prepare(
+        let stmt = try_iron!(db.prepare(
                 "SELECT e.* FROM Login lo JOIN Library li ON lo.id = li.login_id \
-                JOIN Entry e ON e.id = li.entry_id WHERE e.id = $1 AND lo.id = $2")
-            .on_err(e));
-        let prev_entry = try!(stmt.query(&[&entry_id, &user_id]).on_err(e))
+                JOIN Entry e ON e.id = li.entry_id WHERE e.id = $1 AND lo.id = $2"));
+        let prev_entry = try_iron!(stmt.query(&[&entry_id, &user_id]))
             .collect_sql::<Vec<Entry>>()[0].clone();
 
         if new_entry.status.is_none() {
@@ -60,12 +56,11 @@ fn post_entry(req: &mut Request) -> IronResult<Response> {
             new_entry.time_played = prev_entry.time_played;
         }
 
-        try!(db.execute(
+        try_iron!(db.execute(
                 "UPDATE Entry e SET status = $3, time_played = $4 WHERE e.id = $1 AND EXISTS \
                 (SELECT * FROM Library li WHERE li.entry_id = $1 AND li.login_id = $2)",
                 &[&entry_id, &user_id, &new_entry.status.unwrap(), &new_entry.time_played])
-            .on_err(
-                "failed, probably because name/email already exists"));
+            => "failed, probably because name/email already exists");
     } else {
         if new_entry.game_id.is_none() {
             return Err(LibError::Cause(
@@ -80,25 +75,23 @@ fn post_entry(req: &mut Request) -> IronResult<Response> {
 
         // Insert new entry
         // Create transaction and commit if everything went as expected
-        let trans = try!(db.transaction().on_err(e));
+        let trans = try_iron!(db.transaction());
         // First create entry and then map that into a library
-        let stmt = try!(trans.prepare(
+        let stmt = try_iron!(trans.prepare(
                 "INSERT INTO Entry (game_id, time_played, status) \
-                VALUES ($1, $2, $3) RETURNING *")
-            .on_err(e));
-        let entry_opt = try!(stmt.query(
-                &[&new_entry.game_id, &new_entry.time_played, &new_entry.status.unwrap()])
-            .on_err(e)).collect_sql::<Vec<Entry>>().pop();
-        new_entry = try!(entry_opt.ok_or(
-                LibError::Cause("Failed inserting new entry".to_string())).on_err(e));
+                VALUES ($1, $2, $3) RETURNING *"));
+        new_entry = try_iron!(opt: try_iron!(
+                stmt.query(&[&new_entry.game_id, &new_entry.time_played,
+                           &new_entry.status.unwrap()]))
+            .collect_sql::<Vec<Entry>>().pop()
+            => "Failed inserting new entry");
 
         // Create library entry
-        try!(trans.execute(
+        try_iron!(trans.execute(
                 "INSERT INTO Library (entry_id, login_id) VALUES ($1, $2)",
-                &[&new_entry.id.unwrap(), &user_id])
-            .on_err(e));
+                &[&new_entry.id.unwrap(), &user_id]));
 
-        try!(trans.commit().on_err(e));
+        try_iron!(trans.commit());
     }
 
     Ok(Response::with((status::Ok, Json(new_entry))))
@@ -108,24 +101,21 @@ fn post_login(req: &mut Request) -> IronResult<Response> {
     let login = try!(req.get::<bodyparser::Struct<Login>>()
                      .on_err(status::BadRequest)).unwrap();
 
-    let e = status::InternalServerError;
     let db = req.db();
-    let stmt = try!(db.prepare(
+    let stmt = try_iron!(db.prepare(
             "INSERT INTO Login (username, password, email) \
-            VALUES ($1, $2, $3) RETURNING (id, username, email)").on_err(e));
-    let user = try!(stmt.query(
-            &[&login.username, &login.password, &login.email]).on_err(e))
+            VALUES ($1, $2, $3) RETURNING (id, username, email)"));
+    let user = try_iron!(stmt.query(
+            &[&login.username, &login.password, &login.email]))
         .collect_sql::<Vec<User>>().pop();
 
     Ok(Response::with((status::Ok, Json(user))))
 }
 
 fn get_status(req: &mut Request) -> IronResult<Response> {
-    let e = status::InternalServerError;
-
     let db = req.db();
-    let stmt = try!(db.prepare("SELECT unnest(enum_range(NULL::Status))").on_err(e));
-    let res = try!(stmt.query(&[]).on_err(e)).map(|x| {
+    let stmt = try_iron!(db.prepare("SELECT unnest(enum_range(NULL::Status))"));
+    let res = try_iron!(stmt.query(&[])).map(|x| {
         x.get(0)
     }).collect::<Vec<Status>>();
 
@@ -136,10 +126,9 @@ fn get_game_by_id(req: &mut Request) -> IronResult<Response> {
     let id = try!(req.get_from_router::<i32>("id")
                   .on_err(status::BadRequest));
 
-    let e = status::InternalServerError;
     let db = req.db();
-    let stmt = try!(db.prepare("SELECT * FROM Game WHERE id = $1").on_err(e));
-    let mut res = try!(stmt.query(&[&id]).on_err(e)).collect_sql::<Vec<Game>>();
+    let stmt = try_iron!(db.prepare("SELECT * FROM Game WHERE id = $1"));
+    let mut res = try_iron!(stmt.query(&[&id])).collect_sql::<Vec<Game>>();
 
     if res.is_empty() {
         Ok(Response::with(status::NoContent))
@@ -150,10 +139,8 @@ fn get_game_by_id(req: &mut Request) -> IronResult<Response> {
 
 fn get_games(req: &mut Request) -> IronResult<Response> {
     let db = req.db();
-    let e = status::InternalServerError;
-
-    let stmt = try!(db.prepare("SELECT * FROM Game ORDER BY name").on_err(e));
-    let res = try!(stmt.query(&[]).on_err(e)).collect_sql::<Vec<Game>>();
+    let stmt = try_iron!(db.prepare("SELECT * FROM Game ORDER BY name"));
+    let res = try_iron!(stmt.query(&[])).collect_sql::<Vec<Game>>();
 
     Ok(Response::with((status::Ok, Json(res))))
 }
@@ -163,12 +150,11 @@ fn get_entry(req: &mut Request) -> IronResult<Response> {
     let user_id = try!(req.get_from_router::<i32>("uid").on_err(e));
     let entry_id = try!(req.get_from_router::<i32>("eid").on_err(e));
 
-    let e = status::InternalServerError;
     let db = req.db();
-    let stmt = try!(db.prepare(
+    let stmt = try_iron!(db.prepare(
             "SELECT e.* FROM Login lo JOIN Library li ON lo.id = li.login_id \
-            JOIN Entry e ON e.id = li.entry_id WHERE e.id = $1 AND lo.id = $2").on_err(e));
-    let mut res = try!(stmt.query(&[&entry_id, &user_id]).on_err(e))
+            JOIN Entry e ON e.id = li.entry_id WHERE e.id = $1 AND lo.id = $2"));
+    let mut res = try_iron!(stmt.query(&[&entry_id, &user_id]))
         .collect_sql::<Vec<Entry>>();
 
     if res.is_empty() {
@@ -179,15 +165,14 @@ fn get_entry(req: &mut Request) -> IronResult<Response> {
 }
 
 fn get_library(req: &mut Request) -> IronResult<Response> {
-    let e = status::InternalServerError;
     let user_id = try!(req.get_from_router::<i32>("id")
                        .on_err(status::BadRequest));
 
     let db = req.db();
-    let stmt = try!(db.prepare(
+    let stmt = try_iron!(db.prepare(
             "SELECT e.* FROM Login lo JOIN Library li ON lo.id = li.login_id \
-            JOIN Entry e ON e.id = li.entry_id WHERE lo.id = $1").on_err(e));
-    let res = try!(stmt.query(&[&user_id]).on_err(e))
+            JOIN Entry e ON e.id = li.entry_id WHERE lo.id = $1"));
+    let res = try_iron!(stmt.query(&[&user_id]))
         .collect_sql::<Vec<Entry>>();
 
     if res.is_empty() {
@@ -201,13 +186,12 @@ fn get_user_by_id(req: &mut Request) -> IronResult<Response> {
     let id = try!(req.get_from_router::<i32>("id")
                   .on_err(status::BadRequest));
 
-    let e = status::NoContent;
     let db = req.db();
-    let stmt = try!(db.prepare("SELECT * FROM Login WHERE id = $1").on_err(e));
-    let mut res = try!(stmt.query(&[&id]).on_err(e)).collect_sql::<Vec<User>>();
+    let stmt = try_iron!(db.prepare("SELECT * FROM Login WHERE id = $1"));
+    let mut res = try_iron!(stmt.query(&[&id])).collect_sql::<Vec<User>>();
 
     if res.is_empty() {
-        Ok(Response::with(e))
+        Ok(Response::with(status::NoContent))
     } else {
         Ok(Response::with((status::Ok, Json(res.pop()))))
     }
@@ -215,10 +199,8 @@ fn get_user_by_id(req: &mut Request) -> IronResult<Response> {
 
 fn get_users(req: &mut Request) -> IronResult<Response> {
     let db = req.db();
-    let e = status::InternalServerError;
-
-    let stmt = try!(db.prepare("SELECT * FROM Login").on_err(e));
-    let res = try!(stmt.query(&[]).on_err(e)).collect_sql::<Vec<User>>();
+    let stmt = try_iron!(db.prepare("SELECT * FROM Login"));
+    let res = try_iron!(stmt.query(&[])).collect_sql::<Vec<User>>();
 
     Ok(Response::with((status::Ok, Json(res))))
 }

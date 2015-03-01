@@ -26,7 +26,24 @@ use std::str::FromStr;
 // Reexport BeforeMiddleware for DbConnection so that
 // the user doesn't separately need to import it by themselves.
 pub use iron::BeforeMiddleware;
+pub use iron::status;
 pub use postgres::Row;
+
+#[macro_export]
+macro_rules! try_iron {
+    ($expr:expr) => (try!($expr.on_err($crate::status::InternalServerError)));
+
+    ($expr:expr => $cause:expr) => {{
+        try!($expr
+             .map_err(|_| $crate::LibError::Cause($cause.to_string()))
+             .on_err($crate::status::InternalServerError))
+    }};
+
+    (opt: $expr:expr => $cause:expr) => {{
+        try_iron!(
+        $expr.ok_or($crate::LibError::Cause($cause.to_string())))
+    }};
+}
 
 pub mod models;
 
