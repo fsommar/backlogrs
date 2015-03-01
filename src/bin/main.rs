@@ -37,11 +37,12 @@ fn main() {
 }
 
 fn post_entry(req: &mut Request) -> IronResult<Response> {
+    let e = status::BadRequest;
     let mut new_entry = try!(req.get::<bodyparser::Struct<Entry>>()
-                             .on_err("bad request")).unwrap();
-    let e = status::InternalServerError;
+                             .on_err(e)).unwrap();
     let user_id = try!(req.get_from_router::<i32>("id").on_err(e));
 
+    let e = status::InternalServerError;
     let db = req.db();
     if let Some(entry_id) = new_entry.id {
         // The entry should be updated
@@ -104,10 +105,10 @@ fn post_entry(req: &mut Request) -> IronResult<Response> {
 }
 
 fn post_login(req: &mut Request) -> IronResult<Response> {
-    let e = status::InternalServerError;
     let login = try!(req.get::<bodyparser::Struct<Login>>()
-                     .on_err("bad request")).unwrap();
+                     .on_err(status::BadRequest)).unwrap();
 
+    let e = status::InternalServerError;
     let db = req.db();
     let stmt = try!(db.prepare(
             "INSERT INTO Login (username, password, email) \
@@ -132,15 +133,16 @@ fn get_status(req: &mut Request) -> IronResult<Response> {
 }
 
 fn get_game_by_id(req: &mut Request) -> IronResult<Response> {
-    let e = status::NoContent;
-    let id = try!(req.get_from_router::<i32>("id").on_err(e));
+    let id = try!(req.get_from_router::<i32>("id")
+                  .on_err(status::BadRequest));
 
+    let e = status::InternalServerError;
     let db = req.db();
     let stmt = try!(db.prepare("SELECT * FROM Game WHERE id = $1").on_err(e));
     let mut res = try!(stmt.query(&[&id]).on_err(e)).collect_sql::<Vec<Game>>();
 
     if res.is_empty() {
-        Ok(Response::with(e))
+        Ok(Response::with(status::NoContent))
     } else {
         Ok(Response::with((status::Ok, Json(res.pop()))))
     }
@@ -148,7 +150,7 @@ fn get_game_by_id(req: &mut Request) -> IronResult<Response> {
 
 fn get_games(req: &mut Request) -> IronResult<Response> {
     let db = req.db();
-    let e = ("Database error!", status::InternalServerError);
+    let e = status::InternalServerError;
 
     let stmt = try!(db.prepare("SELECT * FROM Game ORDER BY name").on_err(e));
     let res = try!(stmt.query(&[]).on_err(e)).collect_sql::<Vec<Game>>();
@@ -157,19 +159,20 @@ fn get_games(req: &mut Request) -> IronResult<Response> {
 }
 
 fn get_entry(req: &mut Request) -> IronResult<Response> {
-    let e = status::NoContent;
+    let e = status::BadRequest;
     let user_id = try!(req.get_from_router::<i32>("uid").on_err(e));
     let entry_id = try!(req.get_from_router::<i32>("eid").on_err(e));
 
+    let e = status::InternalServerError;
     let db = req.db();
     let stmt = try!(db.prepare(
             "SELECT e.* FROM Login lo JOIN Library li ON lo.id = li.login_id \
             JOIN Entry e ON e.id = li.entry_id WHERE e.id = $1 AND lo.id = $2").on_err(e));
-    let mut res = try!(stmt.query(&[&entry_id, &user_id]).on_err(("Oops", e)))
+    let mut res = try!(stmt.query(&[&entry_id, &user_id]).on_err(e))
         .collect_sql::<Vec<Entry>>();
 
     if res.is_empty() {
-        Ok(Response::with(e))
+        Ok(Response::with(status::NoContent))
     } else {
         Ok(Response::with((status::Ok, Json(res.pop()))))
     }
@@ -177,7 +180,8 @@ fn get_entry(req: &mut Request) -> IronResult<Response> {
 
 fn get_library(req: &mut Request) -> IronResult<Response> {
     let e = status::InternalServerError;
-    let user_id = try!(req.get_from_router::<i32>("id").on_err(e));
+    let user_id = try!(req.get_from_router::<i32>("id")
+                       .on_err(status::BadRequest));
 
     let db = req.db();
     let stmt = try!(db.prepare(
@@ -186,13 +190,18 @@ fn get_library(req: &mut Request) -> IronResult<Response> {
     let res = try!(stmt.query(&[&user_id]).on_err(e))
         .collect_sql::<Vec<Entry>>();
 
-    Ok(Response::with((status::Ok, Json(res))))
+    if res.is_empty() {
+        Ok(Response::with(status::NoContent))
+    } else {
+        Ok(Response::with((status::Ok, Json(res))))
+    }
 }
 
 fn get_user_by_id(req: &mut Request) -> IronResult<Response> {
-    let e = status::NoContent;
-    let id = try!(req.get_from_router::<i32>("id").on_err(e));
+    let id = try!(req.get_from_router::<i32>("id")
+                  .on_err(status::BadRequest));
 
+    let e = status::NoContent;
     let db = req.db();
     let stmt = try!(db.prepare("SELECT * FROM Login WHERE id = $1").on_err(e));
     let mut res = try!(stmt.query(&[&id]).on_err(e)).collect_sql::<Vec<User>>();
