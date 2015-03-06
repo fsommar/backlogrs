@@ -3,9 +3,10 @@ extern crate postgres;
 extern crate time;
 extern crate chrono;
 use {Row, FromSqlRow};
-use postgres::types::Type;
+use postgres::types::{self, Type};
 use std::string;
-use std::str::FromStr;
+use std::str::{self, FromStr};
+use std::io::{Read, Write};
 
 #[derive(Debug, Clone)]
 pub struct UtcString(chrono::DateTime<chrono::UTC>);
@@ -87,63 +88,67 @@ impl FromStr for UtcString {
 }
 
 impl postgres::FromSql for UtcString {
-    fn from_sql(ty: &Type, raw: Option<&[u8]>) -> postgres::Result<Self> {
-        match *ty {
-            Type::Timestamp | Type::TimestampTZ => {}
-            _ => return Err(postgres::Error::WrongType(ty.clone()))
-        }
-        let ts: time::Timespec = try!(postgres::FromSql::from_sql(ty, raw));
+    accepts!(Type::Timestamp, Type::TimestampTZ);
+
+    fn from_sql<R: Read>(ty: &Type, raw: &mut R) -> postgres::Result<Self> {
+        let ts: time::Timespec = postgres::FromSql::from_sql(ty, raw).unwrap();
         let dt = chrono::NaiveDateTime::from_timestamp(ts.sec, ts.nsec as u32);
         Ok(UtcString(chrono::DateTime::from_utc(dt, chrono::UTC)))
     }
 }
 
 impl postgres::ToSql for UtcString {
-    fn to_sql(&self, ty: &Type) -> postgres::Result<Option<Vec<u8>>> {
-        match *ty {
-            Type::Timestamp | Type::TimestampTZ => {}
-            _ => return Err(postgres::Error::WrongType(ty.clone()))
-        }
-        self.0.timestamp().to_sql(&Type::Int8)
+    accepts!(Type::Timestamp, Type::TimestampTZ);
+    to_sql_checked!();
+
+    fn to_sql<W: Write+?Sized>(&self, _: &Type, out: &mut W) -> postgres::Result<types::IsNull> {
+        self.0.timestamp().to_sql(&Type::Int8, out)
     }
 }
 
 impl postgres::FromSql for Status {
-    fn from_sql(ty: &Type, raw: Option<&[u8]>) -> postgres::Result<Self> {
-        match *ty {
-            Type::Unknown(ref u) if u.name() == "status" => {}
-            _ => return Err(postgres::Error::WrongType(ty.clone()))
-        }
-
-        let err = Err(postgres::Error::BadData);
-        if let Some(x) = raw {
-            let res = match ::std::str::from_utf8(x) {
-                Ok("Frozen") => Status::Frozen,
-                Ok("CurrentlyPlaying") => Status::CurrentlyPlaying,
-                Ok("Dropped") => Status::Dropped,
-                Ok("PlanToPlay") => Status::PlanToPlay,
-                _ => return err,
-            };
-            Ok(res)
+    fn accepts(ty: &Type) -> bool {
+        if let &Type::Other(ref o) = ty {
+            o.name() == "status"
         } else {
-            err
+            false
         }
+    }
+
+    fn from_sql<R: Read>(_: &Type, raw: &mut R) -> postgres::Result<Self> {
+        let mut buf = vec![];
+        try!(raw.read_to_end(&mut buf));
+        let res = match str::from_utf8(&buf) {
+            Ok("Frozen") => Status::Frozen,
+            Ok("CurrentlyPlaying") => Status::CurrentlyPlaying,
+            Ok("Dropped") => Status::Dropped,
+            Ok("PlanToPlay") => Status::PlanToPlay,
+            _ => return Err(postgres::Error::WasNull),
+        };
+        Ok(res)
     }
 }
 
 impl postgres::ToSql for Status {
-    fn to_sql(&self, ty: &Type) -> postgres::Result<Option<Vec<u8>>> {
-        match *ty {
-            Type::Unknown(ref u) if u.name() == "status" => {}
-            _ => return Err(postgres::Error::WrongType(ty.clone()))
+    to_sql_checked!();
+
+    fn accepts(ty: &Type) -> bool {
+        if let &Type::Other(ref o) = ty {
+            o.name() == "status"
+        } else {
+            false
         }
+    }
+
+    fn to_sql<W: Write+?Sized>(&self, _: &Type, out: &mut W) -> postgres::Result<types::IsNull> {
         let s = match *self {
             Status::Frozen => "Frozen",
             Status::CurrentlyPlaying => "CurrentlyPlaying",
             Status::Dropped => "Dropped",
             Status::PlanToPlay => "PlanToPlay",
         };
-        Ok(Some(s.as_bytes().to_vec()))
+        try!(out.write(s.as_bytes()));
+        Ok(types::IsNull::No)
     }
 }
 

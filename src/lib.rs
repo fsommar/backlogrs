@@ -1,9 +1,9 @@
-#![feature(core)]
+#![feature(io, core)]
 extern crate iron;
 extern crate router;
 extern crate "error" as err;
 extern crate "rustc-serialize" as rustc_serialize;
-extern crate postgres;
+#[macro_use] extern crate postgres;
 extern crate r2d2;
 extern crate r2d2_postgres;
 extern crate plugin;
@@ -72,7 +72,7 @@ pub trait CollectSql<T> {
 
 impl<'stmt,T: FromSqlRow> CollectSql<T> for postgres::Rows<'stmt> {
     fn collect_sql<R: FromIterator<T>>(self) -> R {
-        self.map(|x| FromSqlRow::from_sql_row(&x)).collect()
+        self.iter().map(|x| FromSqlRow::from_sql_row(&x)).collect()
     }
 }
 
@@ -170,7 +170,7 @@ impl DbConnection {
             // even without a password.
             "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql/backlogrs",
             SslMode::None);
-        let error_handler = Box::new(r2d2::LoggingErrorHandler);
+        let error_handler = Box::new(r2d2::NoopErrorHandler);
         let pool = Arc::new(r2d2::Pool::new(config, manager, error_handler).unwrap());
         DbConnection {
             pool: pool
