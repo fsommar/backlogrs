@@ -91,7 +91,7 @@ impl postgres::FromSql for UtcString {
     accepts!(Type::Timestamp, Type::TimestampTZ);
 
     fn from_sql<R: Read>(ty: &Type, raw: &mut R) -> postgres::Result<Self> {
-        let ts: time::Timespec = postgres::FromSql::from_sql(ty, raw).unwrap();
+        let ts: time::Timespec = try!(postgres::FromSql::from_sql(ty, raw));
         let dt = chrono::NaiveDateTime::from_timestamp(ts.sec, ts.nsec as u32);
         Ok(UtcString(chrono::DateTime::from_utc(dt, chrono::UTC)))
     }

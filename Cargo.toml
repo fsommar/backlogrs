@@ -11,6 +11,7 @@ error = "0.1"
 plugin = "0.2"
 typemap = "0.0.10"
 r2d2 = "0.5"
+r2d2_postgres = "0.8"
 chrono = "0.2.5"
 
 [dependencies.bodyparser]
@@ -23,9 +24,6 @@ features = ["rustc-serialize"]
 [dependencies.postgres]
 version = "0.7"
 features = ["time", "unix_socket"]
-
-[dependencies.r2d2_postgres]
-git = "https://github.com/sfackler/r2d2-postgres"
 
 # Compiler bug workaround (#22432)
 [profile.dev]
